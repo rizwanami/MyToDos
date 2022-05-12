@@ -7,35 +7,74 @@
 
 import Foundation
 import SwiftUI
+import Combine
 class DataStore : ObservableObject {
    
    @Published var toDos : [ToDo] = []
    @Published var appError : ErrorType? = nil
+   var addToDo = PassthroughSubject<ToDo, Never>()
+   var updateToDo = PassthroughSubject<ToDo, Never>()
+   var deleteToDo = PassthroughSubject<IndexSet, Never>()
+   
+   var subscriptions = Set<AnyCancellable>()
    init(){
       print(FileManager.docrDirURL.path)
+      addSubscriptions()
       if FileManager().docExist(named : fileName){
          loadToDo()
       }
      
    }
-   
-   func addToDo(toDo : ToDo){
-      toDos.append(toDo)
-      saveToDo()
-   }
-   func updateToDo(toDo : ToDo){
-      guard let index = toDos.firstIndex(where: { $0.id == toDo.id
-         
-      })  else {
-         return
+   func addSubscriptions(){
+      $toDos
+         .subscribe(on: DispatchQueue(label: "background queue"))
+         .receive(on: DispatchQueue.main)
+         .encode(encoder: JSONEncoder())
+         .tryMap { (data)  in
+            try data.write(to: FileManager.docrDirURL.appendingPathComponent(fileName))
+         }
+         .sink { [unowned self] (completion) in
+            switch completion {
+            case .finished:
+               print("Saving completed")
+            case .failure(let error):
+               if error is ToDoError {
+                  self.appError = ErrorType(error: error as! ToDoError)
+               } else {
+                  self.appError = ErrorType(error: ToDoError.decodingError)
+               }
+            }
+         } receiveValue: {
+         print("Saving file was sucessfull")
+         }
+         .store(in: &subscriptions)
+
+      addToDo.sink { [unowned self] toDo in
+         toDos.append(toDo)
+         //saveToDo()
       }
-      toDos[index] = toDo
-      saveToDo()
+      .store(in: &subscriptions)
+      
+      updateToDo.sink { [unowned self] (toDo) in
+         guard let index = toDos.firstIndex(where: { $0.id == toDo.id
+         }) else {
+            return
+         }
+         toDos[index] = toDo
+        // saveToDo()
+      }
+      .store(in: &subscriptions)
+      
+      deleteToDo.sink { [unowned self] (index) in
+         toDos.remove(atOffsets: index)
+         //saveToDo()
+      }
+      .store(in: &subscriptions)
+
+
+      
    }
-   func deleteToDo(at indexSet : IndexSet){
-      toDos.remove(atOffsets: indexSet)
-      saveToDo()
-   }
+  
    func loadToDo(){
       FileManager().readDocument(docName: fileName) { (result) in
          switch result {
@@ -58,7 +97,7 @@ class DataStore : ObservableObject {
    }
    }
       
-   func saveToDo(){
+  /* func saveToDo(){
         print("Save Data successfully")
       let enccoder = JSONEncoder()
       do {
@@ -78,5 +117,5 @@ class DataStore : ObservableObject {
          appError = ErrorType(error: .saveError)
       }
       
-      }
+      }*/
    }
